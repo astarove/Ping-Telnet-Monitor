@@ -1,12 +1,17 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
+﻿#!/usr/bin/python
+# -*- coding:utf-8 -*-
 
+import argparse
 import json
+import os
 import subprocess
+import sys
 import re
 import time
 
+
 from telnetlib import Telnet
+from threading import Timer
 from tkinter import *
 from tkinter.ttk import Frame, Style, Notebook, Treeview
 
@@ -15,7 +20,6 @@ class PMFileUtils:
     """docstring"""
 
     def __init__(self):
-#        self.textfield = textfield
         pass
 
     def get_host(self):
@@ -25,44 +29,59 @@ class PMFileUtils:
             for host in data:
                 yield[host, data[host]]
 
+
 class PMUtils:
     """docstring"""
 
-    def __init__(self, textfield):
+    def __init__(self, textfield, cmd=False):
         self.textfield = textfield
+        self.cmd = cmd
         pass
 
     def ping(self, addr):
         args = ["ping", addr, "-n", "6"]
         process = subprocess.Popen(args, stdout=subprocess.PIPE)
         line = ' '
-        result = "OK"
-        while( line ):
-            line = process.stdout.readline().decode("ascii")
+        result = "FAIL"
+        while line:
+            line = process.stdout.readline().decode("cp1251")
             if line:
-                self.textfield.insert(END, line)
-                self.textfield.update()
-                self.textfield.see(END)
-                if re.search('\(100% loss\),', line):
-                    result = "FAIL"
+                if self.cmd:
+                    print(line.rstrip())
+                else:
+                    self.textfield.insert(END, line)
+                    self.textfield.update()
+                    self.textfield.see(END)
+                if re.search('\(\d{1,2}%\s', line) and not re.search('TTL=', line):
+                    result = "OK"
         return result
 
     def telnet(self, addr, port, timeout=5):
         result = "OK"
 
-        try:
-            Telnet(addr, port, timeout).interact()
-        except ConnectionRefusedError:
-            self.textfield.insert(END, "Connection error to %s:%s\n" %
-                                 (addr, port))
-            result = "FALSE"
+        if self.cmd:
+            try:
+                Telnet(addr, port, timeout).interact()
+            except ConnectionRefusedError:
+                print("Connection error to %s:%s" % (addr, port))
+                result = "FALSE"
+            else:
+                print("Connection established to %s:%s" % (addr, port))
+                result = "OK"
+            finally:
+                return result
         else:
-            self.textfield.insert(END, "Connection established to %s:%s\n" %
-                                 (addr, port))
-            result = "OK"
-        finally:
-            self.textfield.update()
-            return result
+            try:
+                Telnet(addr, port, timeout).interact()
+            except ConnectionRefusedError:
+                self.textfield.insert(END, "Connection error to %s:%s" % (addr, port))
+                result = "FALSE"
+            else:
+                self.textfield.insert(END, "Connection established to %s:%s" % (addr, port))
+                result = "OK"
+            finally:
+                self.textfield.update()
+                return result
 
 
 class Table(Frame):
@@ -93,13 +112,17 @@ class Table(Frame):
         self.table.insert('', END, values=(col1, col2, col3))
         self.table.update()
 
-    def get_data(self):
+    def export_data(self, auto=False):
         iids = self.table.get_children()
-        with( open("export.csv", "w")) as fh:
+        access_type = "w"
+        if auto:
+            access_type = "a"
+        with( open("export.csv", access_type)) as fh:
             for iid in iids:
                 fh.write(','.join(str(i) for i in
                                   self.table.item(iid)["values"]))
                 fh.write('\n')
+
 
 class PMGUI(Frame):
     def __init__(self, parent):
@@ -115,13 +138,14 @@ class PMGUI(Frame):
         self.Utils = PMUtils(self.frame_log)
         self.initUI()
 
+
     def _get_ping(self):
         for host in PMFileUtils.get_host(PMFileUtils):
             result = self.Utils.ping(host[0])
             self.frame_log.insert(END, "============================\n")
             self.frame_log.see(END)
             self.frame1.add_data_ping(host[0], result)
-#        a = self.frame1.get_data()
+#        a = self.frame1.export_data()
 #        pass
 
     def _get_telnet(self):
@@ -132,8 +156,18 @@ class PMGUI(Frame):
                     self.frame_log.insert(END, "============================\n")
                     self.frame_log.see(END)
                     self.frame2.add_data_telnet(host[0], port, result)
-#        a = self.frame2.get_data()
+#        a = self.frame2.export_data()
 #        pass
+
+    def _auto_scan(self):
+        self._get_ping()
+        self._get_telnet()
+
+    def _start_timer(self):
+        pass
+
+    def _stop_timer(self):
+        pass
 
     def _menu(self):
         menubar = Menu(self.parent)
@@ -143,9 +177,9 @@ class PMGUI(Frame):
         filemenu.add_separator()
 
         filemenu.add_command(label="Export Ping to CSV",
-                             command=self.frame1.get_data)
+                             command=self.frame1.export_data)
         filemenu.add_command(label="Export Telnet to CSV",
-                             command=self.frame2.get_data)
+                             command=self.frame2.export_data)
 
         filemenu.add_separator()
 
@@ -154,6 +188,8 @@ class PMGUI(Frame):
         editmenu = Menu(menubar, tearoff=0)
 
 #        editmenu.add_command(label="Properties", command=self.quit)
+        editmenu.add_command(label="Start autoscan", command=self._start_timer)
+        editmenu.add_command(label="Stop autoscan", command=self._stop_timer)
 
         editmenu.add_separator()
 
@@ -192,13 +228,64 @@ class PMGUI(Frame):
         self._notebook()
 
 
-def main():
+def _output(host, data, target, port=False):
+    print(data)
+    if target:
+        access_type = "a"
+        with(open(target, access_type)) as fh:
+            if port and data in ['OK', 'FALSE']:
+                fh.write('telnet, %s:%s,%s,' % (host[0], port, data))
+                fh.write('\n')
+            elif data in ['OK', 'FAIL']:
+                    fh.write('ping, %s,%s,' % (host[0], data))
+                    fh.write('\n')
+    pass
+
+
+def main_gui():
     root = Tk()
     root.geometry("650x350+300+300")
     app = PMGUI(root)
-    util = PMUtils(app.get_textfield())
+    PMUtils(app.get_textfield())
 
     root.mainloop()
 
+
+def main_cli(args):
+    utils = PMUtils('', True)
+    hosts = PMFileUtils()
+    if args.ping:
+        for host in hosts.get_host():
+            _output(host, utils.ping(host[0]), args.export)
+    elif args.telnet:
+        for host in hosts.get_host():
+            if len(host[1]):
+                for port in host[1]:
+                    _output(host, utils.telnet(host[0], port), args.export, port)
+    elif args.all:
+        for host in hosts.get_host():
+            _output(host, utils.ping(host[0]), args.export)
+            if len(host[1]):
+                for port in host[1]:
+                    _output(host, utils.telnet(host[0], port), args.export, port)
+    else:
+        parser.print_help()
+        main_gui()
+
+
 if __name__ == '__main__':
-    main()
+
+    parser = argparse.ArgumentParser(prog='main', usage='python %(prog)s [options] <--export=filename.csv>')
+    parser.add_argument('-p', '--ping', help='Launch pinging addresses', action='store_const', const=True, default=False)
+    parser.add_argument('-t', '--telnet', help='Check specified ports from file', action='store_const', const=True, default=False)
+    parser.add_argument('-a', '--all', help='Launch Ping and Telnet', action='store_const', const=True, default=False)
+    parser.add_argument('-e', '--export', help='Export to CSV file format: -e filename.csv')
+    args = parser.parse_args()
+
+    if args.export:
+        try:
+            os.remove(args.export)
+        except OSError:
+            pass
+
+    main_cli(args)
