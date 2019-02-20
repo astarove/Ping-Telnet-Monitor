@@ -275,11 +275,20 @@ def main_cli(args):
 
 if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser(prog='main', usage='python %(prog)s [options] <--export=filename.csv>')
-    parser.add_argument('-p', '--ping', help='Launch pinging addresses', action='store_const', const=True, default=False)
-    parser.add_argument('-t', '--telnet', help='Check specified ports from file', action='store_const', const=True, default=False)
-    parser.add_argument('-a', '--all', help='Launch Ping and Telnet', action='store_const', const=True, default=False)
-    parser.add_argument('-e', '--export', help='Export to CSV file format: -e filename.csv')
+    parser = argparse.ArgumentParser(prog='main', usage='python %(prog)s [options] <-e filename.csv> <-d S> <-r N>')
+
+    parser.add_argument('-p', '--ping', help='Launch pinging addresses',
+                        action='store_const', const=True, default=False)
+    parser.add_argument('-t', '--telnet', help='Check specified ports from file',
+                        action='store_const', const=True, default=False)
+    parser.add_argument('-a', '--all', help='Launch both Ping and Telnet',
+                        action='store_const', const=True, default=False)
+    parser.add_argument('-e', '--export', help='File name to export in CSV format', default=False)
+    parser.add_argument('-d', '--delay', type=int, help='Enable timer with delay, in seconds', default=False)
+    parser.add_argument('-r', '--repeat', type=int, help='Repeat N launches (with timer only).'
+                                                         ' If not set, repeats will be infinite (not recommended)',
+                        default=False)
+
     args = parser.parse_args()
 
     if args.export:
@@ -288,4 +297,14 @@ if __name__ == '__main__':
         except OSError:
             pass
 
-    main_cli(args)
+    if args.delay:
+        if args.repeat:
+            for n in range(int(args.repeat)):
+                main_cli(args)
+                time.sleep(int(args.delay))
+        else:
+            while 1:
+                main_cli(args)
+                time.sleep(int(args.delay))
+    else:
+        main_cli(args)
